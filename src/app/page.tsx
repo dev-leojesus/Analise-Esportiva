@@ -11,6 +11,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const [selectedCountry, setSelectedCountry] = useState('')
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
+  const [isOnline, setIsOnline] = useState(true)
 
   const fetchMatches = useCallback(async () => {
     try {
@@ -18,9 +19,11 @@ export default function Home() {
       const data = await searchMatchesWithLLM()
       setMatches(data)
       setLastUpdate(new Date())
+      setIsOnline(data.length > 2)
     } catch (err) {
       console.error('Error:', err)
       setError('Falha ao carregar dados')
+      setIsOnline(false)
     } finally {
       setLoading(false)
     }
@@ -57,6 +60,10 @@ export default function Home() {
               </h1>
             </div>
             <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
+                <span className="text-xs text-gray-500">{isOnline ? 'AO VIVO' : 'MODO OFFLINE'}</span>
+              </div>
               <div className="hidden md:flex items-center gap-2 text-sm text-gray-500">
                 <Clock className="w-4 h-4" />
                 <span>Atualizado {lastUpdate.toLocaleTimeString('pt-BR')}</span>

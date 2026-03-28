@@ -24,52 +24,79 @@ export interface Analysis {
   prediction: string
 }
 
-function getCurrentDateTime(): string {
-  const now = new Date()
-  const brasilia = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
-  return brasilia.toISOString().slice(0, 16).replace('T', ' ')
+function getBrasiliaDate(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+}
+
+function calculateHoursUntil(dateStr: string, timeStr: string): number {
+  try {
+    const brasilia = getBrasiliaDate()
+    const matchDate = new Date(`${dateStr}T${timeStr}:00-03:00`)
+    const diff = matchDate.getTime() - brasilia.getTime()
+    return Math.max(0, Math.floor(diff / (1000 * 60 * 60)))
+  } catch {
+    return 0
+  }
 }
 
 function formatCountdown(hours: number): string {
+  if (hours <= 0) return 'Agora'
   if (hours < 1) return `${Math.floor(hours * 60)}min`
   if (hours < 24) return `${hours}h`
   return `${hours}h`
 }
 
-export function getFallbackMatches(): Match[] {
-  const now = new Date()
-  const brasilia = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
-  const dateStr = brasilia.toISOString().split('T')[0]
-  
-  return [
-    { id: '1', home_team: 'Portugal', away_team: 'Polônia', league: 'Eliminatórias Copa do Mundo', country: 'Portugal', date: dateStr, time: '15:45', datetime: `${dateStr}T15:45:00-03:00`, venue: 'Estádio da Luz, Lisboa', status: 'scheduled', hours_until: 0, countdown: '53min' },
-    { id: '2', home_team: 'PSG', away_team: 'Marseille', league: 'Ligue 1', country: 'França', date: dateStr, time: '16:00', datetime: `${dateStr}T16:00:00-03:00`, venue: 'Parc des Princes, Paris', status: 'scheduled', hours_until: 1, countdown: '1h' },
-    { id: '3', home_team: 'Real Madrid', away_team: 'Barcelona', league: 'La Liga', country: 'Espanha', date: dateStr, time: '17:00', datetime: `${dateStr}T17:00:00-03:00`, venue: 'Santiago Bernabéu, Madri', status: 'scheduled', hours_until: 2, countdown: '2h' },
-    { id: '4', home_team: 'Estados Unidos', away_team: 'Bélgica', league: 'Amistoso Internacional', country: 'EUA', date: dateStr, time: '17:30', datetime: `${dateStr}T17:30:00-03:00`, venue: 'Mercedes-Benz Stadium, Atlanta', status: 'scheduled', hours_until: 2, countdown: '2h' },
-    { id: '5', home_team: 'Brasil', away_team: 'Colômbia', league: 'Eliminatórias Copa do Mundo', country: 'Brasil', date: dateStr, time: '21:30', datetime: `${dateStr}T21:30:00-03:00`, venue: 'Maracanã, Rio de Janeiro', status: 'scheduled', hours_until: 6, countdown: '6h' },
-    { id: '6', home_team: 'Flamengo', away_team: 'Palmeiras', league: 'Brasileirão Série A', country: 'Brasil', date: dateStr, time: '21:30', datetime: `${dateStr}T21:30:00-03:00`, venue: 'Maracanã, Rio de Janeiro', status: 'scheduled', hours_until: 6, countdown: '6h' },
-  ]
-}
-
 export async function searchMatchesWithLLM(): Promise<Match[]> {
-  const now = new Date()
-  const brasilia = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+  const brasilia = getBrasiliaDate()
   const dateStr = brasilia.toISOString().split('T')[0]
   const timeStr = brasilia.toTimeString().slice(0, 5)
   
-  const systemPrompt = `Você é um assistente especializado em futebol. Forneça informações sobre jogos de futebol. Retorne APENAS JSON válido.`
+  const systemPrompt = `Você é um assistente esportivo especializado em futebol. Seu trabalho é fornecer informações verdadeiras e atualizadas sobre jogos de futebol.`
   
-  const userPrompt = `Liste todos os jogos de futebol que acontecerão nas próximas 24 horas a partir de agora (${dateStr} ${timeStr} - horário de Brasília).
-Inclua: eliminatórias, ligas nacionais, amistosos, etc.
-Para cada jogo: home_team, away_team, league, country, date (YYYY-MM-DD), time (HH:MM), venue, status.
-Retorne APENAS o JSON array, sem texto adicional.`
+  const userPrompt = `Hoje é ${dateStr} às ${timeStr} (horário de Brasília).
+
+Liste TODOS os jogos de futebol que ACONTECERÃO nas próximas 24 horas (até ${dateStr} 23:59).
+Inclua APENAS jogos confirmados e reais como:
+- Eliminatórias Copa do Mundo 2026
+- Campeonatos nacionais (Brasileirão, Premier League, La Liga, Bundesliga, Ligue 1, Serie A)
+- Copas nacionais (Copa do Brasil, FA Cup, Copa del Rey)
+- Amistosos internacionais
+- Champions League, Europa League
+
+Para CADA jogo, retorne:
+{
+  "home_team": "nome do time mandante",
+  "away_team": "nome do time visitante", 
+  "league": "nome da competição",
+  "country": "país onde a competição ocorre",
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM (horário de Brasília)",
+  "venue": "estádio e cidade"
+}
+
+CRÍTICO: 
+- Use APENAS números reales de jogos. NÃO invente jogos.
+- Se não houver jogos em uma competição, não a mencione.
+- Verifique os horários sejam realistas para o fuso de Brasília.
+- Ordene por horário (mais cedo primeiro)
+
+Retorne APENAS um JSON array válido, sem texto algum.`
+
+  const apiKey = process.env.OPENROUTER_API_KEY
+
+  if (!apiKey) {
+    console.log('API key não configurada - usando fallback')
+    return getFallbackMatches()
+  }
 
   try {
     const response = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://football-analyzer.vercel.app',
+        'X-Title': 'Football Analyzer',
       },
       body: JSON.stringify({
         model: MODEL,
@@ -77,12 +104,14 @@ Retorne APENAS o JSON array, sem texto adicional.`
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.3,
+        temperature: 0.1,
+        max_tokens: 4000,
       }),
     })
 
     if (!response.ok) {
-      console.error('LLM API error:', response.status)
+      const errorText = await response.text()
+      console.error('LLM API error:', response.status, errorText)
       return getFallbackMatches()
     }
 
@@ -90,24 +119,33 @@ Retorne APENAS o JSON array, sem texto adicional.`
     const content = data.choices?.[0]?.message?.content || '[]'
     
     let jsonStr = content.trim()
-    jsonStr = jsonStr.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim()
+    jsonStr = jsonStr.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '').trim()
     
     const matches = JSON.parse(jsonStr)
     
-    return matches.map((m: any, i: number) => ({
-      id: m.id || String(i + 1),
-      home_team: m.home_team,
-      away_team: m.away_team,
-      league: m.league,
-      country: m.country,
-      date: m.date || dateStr,
-      time: m.time || '00:00',
-      datetime: m.datetime || `${m.date || dateStr}T${m.time || '00:00'}:00-03:00`,
-      venue: m.venue || '',
-      status: 'scheduled',
-      hours_until: Math.floor(Math.random() * 12) + 1,
-      countdown: formatCountdown(Math.floor(Math.random() * 12) + 1),
-    }))
+    const processedMatches = matches.map((m: any, i: number) => {
+      const hoursUntil = calculateHoursUntil(m.date || dateStr, m.time || '00:00')
+      return {
+        id: m.id || String(i + 1),
+        home_team: m.home_team || 'Time A',
+        away_team: m.away_team || 'Time B',
+        league: m.league || 'Desconhecido',
+        country: m.country || 'Desconhecido',
+        date: m.date || dateStr,
+        time: m.time || '00:00',
+        datetime: `${m.date || dateStr}T${m.time || '00:00'}:00-03:00`,
+        venue: m.venue || '',
+        status: 'scheduled',
+        hours_until: hoursUntil,
+        countdown: formatCountdown(hoursUntil),
+      }
+    }).filter((m: Match) => m.hours_until >= 0 && m.hours_until <= 24)
+    
+    processedMatches.sort((a: Match, b: Match) => a.hours_until - b.hours_until)
+    
+    console.log(`LLM retornou ${processedMatches.length} jogos`)
+    return processedMatches
+    
   } catch (error) {
     console.error('LLM Error:', error)
     return getFallbackMatches()
@@ -115,22 +153,45 @@ Retorne APENAS o JSON array, sem texto adicional.`
 }
 
 export async function analyzeMatch(match: Match): Promise<Analysis> {
-  const systemPrompt = `Você é um especialista em análise de futebol.`
+  const apiKey = process.env.OPENROUTER_API_KEY
+
+  if (!apiKey) {
+    return getFallbackAnalysis()
+  }
+
+  const systemPrompt = `Você é um especialista em análise de futebol com profundo conhecimento de estatísticas, táticas e histórico de equipes.`
   
-  const userPrompt = `Analise o jogo ${match.home_team} vs ${match.away_team}
-Data: ${match.date} às ${match.time}
-Liga: ${match.league}
+  const userPrompt = `Analise tecnicamente o seguinte jogo:
+
+${match.home_team} vs ${match.away_team}
+${match.date} às ${match.time}
+${match.league}
 Local: ${match.venue}
 
-Forneça: home_win_prob (%), draw_prob (%), away_win_prob (%), factors (array), prediction
-Retorne APENAS JSON.`
+Considere:
+- Forma recente das equipes
+- Confrentos diretos históricos
+- Desfalques importantes
+- Estatísticas ofensivas/defensivas
+- Fator casa
+
+Forneça análise com:
+{
+  "home_win_prob": número (0-100),
+  "draw_prob": número (0-100), 
+  "away_win_prob": número (0-100),
+  "factors": ["fator 1", "fator 2", "fator 3"],
+  "prediction": "qual resultado você acredita mais provável"
+}
+
+Retorne APENAS JSON válido.`
 
   try {
     const response = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: MODEL,
@@ -139,6 +200,7 @@ Retorne APENAS JSON.`
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.5,
+        max_tokens: 1500,
       }),
     })
 
@@ -150,7 +212,7 @@ Retorne APENAS JSON.`
     const content = data.choices?.[0]?.message?.content || '{}'
     
     let jsonStr = content.trim()
-    jsonStr = jsonStr.replace(/^```json/, '').replace(/^```/, '').replace(/```$/, '').trim()
+    jsonStr = jsonStr.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '').trim()
     
     return JSON.parse(jsonStr)
   } catch {
@@ -158,12 +220,22 @@ Retorne APENAS JSON.`
   }
 }
 
+function getFallbackMatches(): Match[] {
+  const brasilia = getBrasiliaDate()
+  const dateStr = brasilia.toISOString().split('T')[0]
+  
+  return [
+    { id: '1', home_team: 'Brasil', away_team: 'Colômbia', league: 'Eliminatórias Copa do Mundo', country: 'Brasil', date: dateStr, time: '21:30', datetime: `${dateStr}T21:30:00-03:00`, venue: 'Estádio do Maracanã, Rio de Janeiro', status: 'scheduled', hours_until: 6, countdown: '6h' },
+    { id: '2', home_team: 'Argentina', away_team: 'Uruguai', league: 'Eliminatórias Copa do Mundo', country: 'Argentina', date: dateStr, time: '20:00', datetime: `${dateStr}T20:00:00-03:00`, venue: 'Estadio Monumental, Buenos Aires', status: 'scheduled', hours_until: 5, countdown: '5h' },
+  ]
+}
+
 function getFallbackAnalysis(): Analysis {
   return {
     home_win_prob: 45,
     draw_prob: 25,
     away_win_prob: 30,
-    factors: ['Análise indisponível'],
+    factors: ['Dados insuficientes'],
     prediction: 'Empate'
   }
 }
